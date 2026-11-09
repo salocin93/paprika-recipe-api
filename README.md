@@ -20,7 +20,7 @@ git-ignored because it contains personal data.
 | `uv run analyze_categories.py [--json]` | Category report → `reports/category_analysis.md` | Never |
 | `uv run fetch_categories.py` | Downloads category UID → name map from your Paprika account into `category_map.yaml` | Never |
 | `uv run merge_categories.py [--show-diff] [--apply]` | Merges/removes categories per `category_merges.yaml` | Only with `--apply` (backs up first) |
-| `uv run classify_dietary.py [--limit N] [--apply]` | Runs the (stub) `DietaryClassifier` | Only with `--apply` |
+| `uv run classify_dietary.py [--limit N] [--apply]` | LLM diet classification → `By Diet › Vegan/Vegetarian/Pescatarian/Meat` | Only with `--apply` |
 
 ### Category names
 
@@ -60,10 +60,12 @@ src/paprika_harness/
 ├── file_manager.py    # scan / parse / safe write (dry-run default, atomic, backups)
 ├── categories.py      # UID → name map + Paprika API fetcher
 ├── analytics.py       # category analysis + Markdown/console/JSON rendering
+├── llm.py             # OpenAI-compatible client: structured JSON, rate limiting
+├── diet.py            # diet prompt, keyword cross-check, result cache
 └── processors/
     ├── base.py        # RecipeProcessor ABC + Pipeline runner
     ├── category_merge.py  # MergePlan + CategoryMerger
-    └── dietary.py     # DietaryClassifier stub (LLM goes here)
+    └── dietary.py     # DietaryClassifier: tags By Diet categories
 ```
 
 ### Safe writes
@@ -98,13 +100,35 @@ class AddSourceTag(RecipeProcessor):
 
 Run it with `Pipeline(RecipeFileManager(dir), [AddSourceTag()]).run()`.
 
-### Dietary classifier
+### Diet classification
 
-`DietaryClassifier` currently prints what it would send to the LLM
-(the title and the ingredients parsed from the `## Ingredients` section) and
-changes nothing. To implement it, fill in `DietaryClassifier.classify()` with
-a call to the OpenAI-compatible endpoint from `LOCAL_LLM_BASE_URL` /
-`LOCAL_LLM_MODEL`, and pass `write_field="diet"` to persist labels.
+`classify_dietary.py` sends each recipe's title, ingredients, directions and
+notes to the LLM configured in `.env` (any OpenAI-compatible endpoint: LM
+Studio, Ollama, vLLM, Gemini, …). The LLM picks the most restrictive label
+the recipe satisfies **as written**: vegan, vegetarian, pescatarian or meat.
+
+Setup: in the Paprika app, create a `By Diet` category with children
+`Vegan`, `Vegetarian`, `Pescatarian` and `Meat`, then run
+`uv run fetch_categories.py`. (Without them the script only classifies.)
+
+```bash
+uv run classify_dietary.py            # classify everything, write reports/diet_review.md
+uv run classify_dietary.py --apply    # tag recipes (uses cached results, no new LLM calls)
+```
+
+* **Cache:** results are stored in `reports/diet_classifications.json`, keyed
+  by a fingerprint of the recipe text, model and prompt version. Only new or
+  changed recipes hit the LLM. Use `--refresh` to force re-classification.
+* **Safety net:** an independent keyword scan (English + German) checks each
+  answer. A recipe is **not tagged** if the LLM's label is more permissive
+  than the keywords show (e.g. "vegetarian" for a recipe listing chicken),
+  if confidence is below `--min-confidence` (0.75), or if the recipe has no
+  ingredient list. These go to the "Needs review" table.
+  `--include-flagged` tags them anyway.
+* **Tagging** replaces any existing `By Diet` child and leaves all other
+  categories alone.
+* **Rate limits:** set `LOCAL_LLM_MAX_RPM` (or `--rpm`) to stay under the
+  provider's limit. Gemini's free tier allows 15 requests per minute.
 
 ## Tests
 

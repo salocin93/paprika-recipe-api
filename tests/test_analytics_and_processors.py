@@ -2,9 +2,8 @@ from pathlib import Path
 
 from paprika_harness.analytics import analyze_categories, normalize, render_markdown
 from paprika_harness.categories import CategoryMap
-from paprika_harness.config import LLMConfig
 from paprika_harness.file_manager import RecipeFileManager
-from paprika_harness.processors import DietaryClassifier, Pipeline, RecipeProcessor, Status
+from paprika_harness.processors import Pipeline, RecipeProcessor, Status
 
 
 def make(tmp_path: Path, name: str, cats: list[str], ingredients=("1 egg",)) -> None:
@@ -70,16 +69,6 @@ def test_category_map_api_shape(tmp_path):
 
 def test_missing_category_map_is_empty(tmp_path):
     assert len(CategoryMap.load(tmp_path / "nope.yaml")) == 0
-
-
-def test_dietary_stub_is_passthrough(tmp_path, capsys):
-    make(tmp_path, "Omelette", [], ingredients=["2 eggs", "butter"])
-    fm = RecipeFileManager(tmp_path)
-    before = (tmp_path / "Omelette.md").read_text()
-    report = Pipeline(fm, [DietaryClassifier(LLMConfig(None, None, None))]).run()
-    assert report.counts == {"unchanged": 1} and report.writes == []
-    assert "would classify: 'Omelette' (2 ingredients: 2 eggs, butter)" in capsys.readouterr().out
-    assert (tmp_path / "Omelette.md").read_text() == before
 
 
 def test_pipeline_dry_run_and_error_isolation(tmp_path):

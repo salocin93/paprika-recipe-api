@@ -22,6 +22,7 @@ class LLMConfig:
     base_url: str | None
     api_key: str | None
     model: str | None
+    max_rpm: float | None = None  # client-side requests-per-minute cap
 
     @property
     def is_configured(self) -> bool:
@@ -80,6 +81,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
             base_url=_opt("LOCAL_LLM_BASE_URL"),
             api_key=_opt("LOCAL_LLM_API_KEY"),
             model=_opt("LOCAL_LLM_MODEL"),
+            max_rpm=float(_opt("LOCAL_LLM_MAX_RPM") or 0) or None,
         ),
         paprika_email=_opt("PAPRIKA_EMAIL"),
         paprika_password=_opt("PAPRIKA_PASSWORD"),

@@ -1,68 +1,111 @@
-"""Dietary classification processor (placeholder — LLM logic comes later)."""
+"""Dietary classification processor: tags recipes with a "By Diet" category."""
 
 from __future__ import annotations
 
 import logging
-import re
-from typing import Literal
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..config import LLMConfig
+from ..categories import CategoryMap
+from ..diet import DIETS, Classification, ClassificationCache, LLMLike, classify_recipe
+from ..diet import extract_ingredients  # noqa: F401  (re-export for backwards compat)
 from ..recipe import Recipe
 from .base import ProcessResult, RecipeProcessor, Status
 
 log = logging.getLogger(__name__)
 
-DietLabel = Literal["vegan", "vegetarian", "meat"]
+DIET_NAMES = {"vegan": "Vegan", "vegetarian": "Vegetarian", "pescatarian": "Pescatarian", "meat": "Meat"}
 
 
-def extract_ingredients(body: str) -> list[str]:
-    """Return the bullet lines under the ``## Ingredients`` heading."""
-    match = re.search(r"^## Ingredients\s*$(.*?)(?=^## |\Z)", body, re.M | re.S)
-    if not match:
-        return []
-    return [
-        line.lstrip("-* ").strip()
-        for line in match.group(1).splitlines()
-        if line.strip().startswith(("-", "*"))
-    ]
+def resolve_diet_categories(cmap: CategoryMap, parent: str = "By Diet") -> dict[str, str]:
+    """Map each diet label to the UID of ``<parent> › <Name>``. Raises KeyError if any is missing."""
+    missing, uids = [], {}
+    for diet in DIETS:
+        path = f"{parent} › {DIET_NAMES[diet]}"
+        try:
+            uids[diet] = cmap.resolve(path)
+        except KeyError:
+            missing.append(path)
+    if missing:
+        raise KeyError("missing categories in Paprika: " + ", ".join(missing))
+    return uids
 
 
 class DietaryClassifier(RecipeProcessor):
-    """Classify recipes as vegan / vegetarian / meat.
+    """Classify each recipe as vegan / vegetarian / pescatarian / meat.
 
-    **Stub.** Currently a pass-through: it prints what it *would* send to the
-    LLM and leaves the recipe untouched. To implement, replace
-    :meth:`classify` with a call to the OpenAI-compatible endpoint in
-    ``self.llm`` and set ``write_field`` to persist the label.
+    Args:
+        llm: client with ``complete_json`` (see :class:`paprika_harness.llm.LLMClient`).
+        cache: results are stored here so re-runs don't call the LLM again.
+        diet_uids: label -> category UID. ``None`` = classify only, never modify.
+        min_confidence: below this, the recipe is reported for review, not tagged.
+        include_flagged: also tag recipes that were flagged for review.
     """
 
     name = "dietary_classifier"
 
-    def __init__(self, llm: LLMConfig, *, write_field: str | None = None, verbose: bool = True):
+    def __init__(
+        self,
+        llm: LLMLike,
+        cache: ClassificationCache,
+        *,
+        diet_uids: dict[str, str] | None = None,
+        min_confidence: float = 0.75,
+        include_flagged: bool = False,
+    ):
         self.llm = llm
-        self.write_field = write_field  # e.g. "diet"; None = never modify
-        self.verbose = verbose
+        self.cache = cache
+        self.diet_uids = diet_uids
+        self.min_confidence = min_confidence
+        self.include_flagged = include_flagged
+        self.classifications: dict[str, Classification] = {}
 
-    def setup(self) -> None:
-        target = f"{self.llm.base_url} (model={self.llm.model})" if self.llm.is_configured else "<LLM not configured>"
-        log.info("DietaryClassifier stub active; LLM target: %s", target)
+    # -- classification --------------------------------------------------------
+    def classify(self, recipe: Recipe, *, refresh: bool = False) -> Classification:
+        cached = None if refresh else self.cache.get(recipe, self.llm.model)
+        if cached:
+            return cached
+        result = classify_recipe(recipe, self.llm)
+        self.cache.put(result)
+        return result
 
-    def classify(self, title: str, ingredients: list[str]) -> DietLabel | None:
-        """TODO: call the local LLM here. Returns None until implemented."""
-        return None
+    def prefetch(
+        self,
+        recipes: Iterable[Recipe],
+        *,
+        workers: int = 4,
+        refresh: bool = False,
+        progress: Callable[[int, int, Recipe, Exception | None], None] | None = None,
+    ) -> dict[str, Exception]:
+        """Classify many recipes concurrently, filling the cache. Returns errors by filename."""
+        todo = [r for r in recipes if refresh or not self.cache.get(r, self.llm.model)]
+        errors: dict[str, Exception] = {}
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futures = {pool.submit(self.classify, r, refresh=refresh): r for r in todo}
+            for i, fut in enumerate(as_completed(futures), 1):
+                recipe, exc = futures[fut], fut.exception()
+                if exc:
+                    errors[recipe.path.name] = exc
+                if progress:
+                    progress(i, len(todo), recipe, exc)
+        return errors
 
+    # -- RecipeProcessor -------------------------------------------------------
     def process(self, recipe: Recipe) -> ProcessResult:
-        ingredients = extract_ingredients(recipe.body)
-        if self.verbose:
-            preview = ", ".join(ingredients[:5]) + (" …" if len(ingredients) > 5 else "")
-            print(f"[DietaryClassifier] would classify: {recipe.title!r} "
-                  f"({len(ingredients)} ingredients: {preview})")
+        c = self.classify(recipe)
+        self.classifications[recipe.path.name] = c
 
-        label = self.classify(recipe.title, ingredients)
-        if label is None or not self.write_field:
-            return ProcessResult(recipe, Status.UNCHANGED, "stub: no classification")
+        review = c.needs_review(self.min_confidence)
+        if review and not self.include_flagged:
+            return ProcessResult(recipe, Status.SKIPPED, f"review: {'; '.join(review)}")
+        if self.diet_uids is None:
+            return ProcessResult(recipe, Status.UNCHANGED, f"classified {c.diet} (not tagging)")
 
-        if recipe.frontmatter.get(self.write_field) == label:
-            return ProcessResult(recipe, Status.UNCHANGED, label)
-        recipe.frontmatter[self.write_field] = label
-        return ProcessResult(recipe, Status.MODIFIED, label)
+        target = self.diet_uids[c.diet]
+        diet_set = set(self.diet_uids.values())
+        before = recipe.categories
+        after = [u for u in before if u not in diet_set] + [target]
+        if after == before or (target in before and set(after) == set(before)):
+            return ProcessResult(recipe, Status.UNCHANGED, c.diet)
+        recipe.categories = after
+        return ProcessResult(recipe, Status.MODIFIED, c.diet)
