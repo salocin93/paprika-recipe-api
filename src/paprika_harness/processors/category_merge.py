@@ -11,7 +11,8 @@ A merge plan (YAML) looks like::
       - Grill                           # strip from every recipe
 
 Categories can be referenced by name, path (or path suffix) or UID — see
-:meth:`CategoryMap.resolve`. The plan is validated up front: unknown or
+:meth:`CategoryMap.resolve`. Sources (``from`` / ``remove``) may also be the
+raw UID of a category that was deleted in Paprika but is still on recipes. The plan is validated up front: unknown or
 ambiguous references, a category that is both a source and a target, or a
 source listed in two rules all abort before any recipe is touched.
 
@@ -22,6 +23,7 @@ modified.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +32,9 @@ import yaml
 from ..categories import CategoryMap
 from ..recipe import Recipe
 from .base import ProcessResult, RecipeProcessor, Status
+
+
+UID_RE = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}(-[0-9A-Fa-f-]+)?")
 
 
 class MergePlanError(ValueError):
@@ -61,10 +66,14 @@ class MergePlan:
         unknown_keys = set(data) - {"merges", "remove"}
         problems: list[str] = [f"unknown top-level key: {k!r}" for k in sorted(unknown_keys)]
 
-        def res(ref, where: str) -> str | None:
+        def res(ref, where: str, *, allow_orphan: bool = False) -> str | None:
             try:
                 return cmap.resolve(ref)
             except KeyError as exc:
+                # A source may be the UID of a category deleted in Paprika
+                # that recipes still reference (an "orphan").
+                if allow_orphan and UID_RE.fullmatch(str(ref).strip()):
+                    return str(ref).strip()
                 problems.append(f"{where}: {exc.args[0]}")
                 return None
 
@@ -76,14 +85,14 @@ class MergePlan:
                 continue
             srcs = raw["from"] if isinstance(raw["from"], list) else [raw["from"]]
             target = res(raw["to"], f"{where}.to")
-            sources = [u for u in (res(s, f"{where}.from") for s in srcs) if u]
+            sources = [u for u in (res(s, f"{where}.from", allow_orphan=True) for s in srcs) if u]
             if target and target in sources:
                 problems.append(f"{where}: {cmap.display(target)!r} is both source and target")
                 sources = [s for s in sources if s != target]
             if target and sources:
                 plan.rules.append(MergeRule(sources, target))
         for i, ref in enumerate(data.get("remove") or [], 1):
-            uid = res(ref, f"remove[{i}]")
+            uid = res(ref, f"remove[{i}]", allow_orphan=True)
             if uid:
                 plan.remove.append(uid)
 

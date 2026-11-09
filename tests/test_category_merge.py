@@ -84,3 +84,14 @@ def test_merge_pipeline_dry_run_then_apply(tmp_path, cmap):
     assert loaded == {"Cake": ["TD"], "Pie": ["TD"], "Soup": ["IP"]}
     assert (rdir / "Soup.md").read_text() == originals["Soup.md"]
     assert len(list((tmp_path / "bk").rglob("*.md"))) == 2
+
+
+def test_orphan_uid_allowed_as_source_not_target(cmap):
+    orphan = "A79D2374-2236-4918-8C6E-C645AED8F0F5"
+    plan = MergePlan.from_dict({"merges": [{"from": [orphan], "to": "Deserts"}]}, cmap)
+    assert plan.mapping == {orphan: "TD"}
+    assert MergePlan.from_dict({"remove": [orphan]}, cmap).mapping == {orphan: None}
+    with pytest.raises(MergePlanError, match="no category"):
+        MergePlan.from_dict({"merges": [{"from": ["Dessert"], "to": orphan}]}, cmap)
+    with pytest.raises(MergePlanError, match="no category"):
+        MergePlan.from_dict({"merges": [{"from": ["not-a-uid"], "to": "Deserts"}]}, cmap)

@@ -22,3 +22,6 @@ reports/
 .DS_Store
 backups/
 category_merges.yaml
+recipes_backup/
+*.save
+recipes*/
