@@ -99,3 +99,30 @@ def test_pipeline_dry_run_and_error_isolation(tmp_path):
     assert report.counts == {"modified": 1, "error": 1}
     assert len(report.writes) == 1 and "+diet: vegetarian" in report.writes[0].diff
     assert (tmp_path / "A.md").read_text() == before  # dry run
+
+
+def test_hierarchy_rules(tmp_path):
+    rows = """
+- {uid: r, name: By Region, parent_uid: null}
+- {uid: it, name: Italian, parent_uid: r}
+- {uid: ip, name: Pasta, parent_uid: it}
+- {uid: t, name: By Type, parent_uid: null}
+- {uid: tp, name: Pasta, parent_uid: t}
+- {uid: ja, name: Japanese, parent_uid: r}
+- {uid: th, name: Thai, parent_uid: r}
+- {uid: g, name: German, parent_uid: null}
+- {uid: ga, name: German & Austrian, parent_uid: r}
+"""
+    m = tmp_path / "m.yaml"
+    m.write_text(rows)
+    for i in range(3):
+        make(tmp_path, f"P{i}", ["it", "ip", "tp"])
+    cm = CategoryMap.load(m)
+    assert cm.display("ip") == "By Region › Italian › Pasta"
+    report = analyze_categories(RecipeFileManager(tmp_path).scan(), cm)
+    pairs = {frozenset((cm.display(p.a), cm.display(p.b))): p.reason for p in report.similar}
+    # parent/child never flagged
+    assert frozenset({"By Region › Italian", "By Region › Italian › Pasta"}) not in pairs
+    assert "same name in different branches" in pairs[frozenset({"By Type › Pasta", "By Region › Italian › Pasta"})]
+    assert "contains" in pairs[frozenset({"German", "By Region › German & Austrian"})]
+    assert frozenset({"By Region › Japanese", "By Region › Thai"}) not in pairs

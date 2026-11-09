@@ -35,11 +35,18 @@ class CategoryMap:
     def is_resolved(self, uid: str) -> bool:
         return uid in self.names
 
-    def display(self, uid: str) -> str:
-        """Name, prefixed with its parent (``Parent › Child``) if nested."""
-        name = self.name(uid)
+    def ancestors(self, uid: str) -> list[str]:
+        """Parent chain, nearest first (cycle-safe)."""
+        chain: list[str] = []
         parent = self.parents.get(uid)
-        return f"{self.name(parent)} › {name}" if parent else name
+        while parent and parent not in chain and parent != uid:
+            chain.append(parent)
+            parent = self.parents.get(parent)
+        return chain
+
+    def display(self, uid: str) -> str:
+        """Full path, e.g. ``By Region › European › Italian``."""
+        return " › ".join([self.name(a) for a in reversed(self.ancestors(uid))] + [self.name(uid)])
 
     def __len__(self) -> int:
         return len(self.names)

@@ -29,8 +29,12 @@ SEMANTIC_GROUPS: list[set[str]] = [
     {"bread", "brot"},
     {"chicken", "poultry", "hähnchen", "huhn", "geflügel"},
     {"meat", "beef", "pork", "lamb", "fleisch"},
-    {"fish", "seafood", "fisch"},
-    {"asian", "thai", "chinese", "japanese", "korean", "vietnamese", "indonesian", "malaysian"},
+    {"fish", "seafood", "fisch", "fischgericht"},
+    {"asparagus", "spargel"},
+    {"german", "deutsch", "german and austrian"},
+    {"mediterranean", "mediteranian"},
+    {"stir fry", "wok"},
+    {"air fryer", "air frier"},
 ]
 
 
@@ -136,13 +140,19 @@ def find_similar(
     pairs: list[SimilarPair] = []
     members = {uid: {id(r) for r in rs} for uid, rs in by_cat.items()}
 
+    groups = _norm_groups()
     for a, b in combinations(by_cat, 2):
+        # Parent/child pairs overlap by design — not duplicates.
+        if a in category_map.ancestors(b) or b in category_map.ancestors(a):
+            continue
         reasons: list[tuple[str, float]] = []
 
         if category_map.is_resolved(a) and category_map.is_resolved(b):
             na, nb = category_map.name(a), category_map.name(b)
             ka, kb = normalize(na), normalize(nb)
-            if na.strip().casefold() == nb.strip().casefold():
+            if na == nb:
+                reasons.append(("same name in different branches", 1.0))
+            elif na.strip().casefold() == nb.strip().casefold():
                 reasons.append(("case/whitespace mismatch", 1.0))
             elif ka == kb:
                 reasons.append(("same after normalising (plural/punctuation)", 1.0))
@@ -150,7 +160,10 @@ def find_similar(
                 ratio = SequenceMatcher(None, ka, kb).ratio()
                 if ratio >= fuzzy_threshold:
                     reasons.append((f"similar spelling ({ratio:.0%})", ratio))
-                if any(ka in g and kb in g for g in _norm_groups()):
+                ta, tb = set(ka.split()), set(kb.split())
+                if ta and tb and (ta < tb or tb < ta):
+                    reasons.append(("one name contains the other", 0.8))
+                if any(ka in g and kb in g for g in groups):
                     reasons.append(("related meaning", 0.7))
 
         sa, sb = members[a], members[b]
