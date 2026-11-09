@@ -51,6 +51,37 @@ class CategoryMap:
     def __len__(self) -> int:
         return len(self.names)
 
+    def resolve(self, ref: str) -> str:
+        """Turn a user reference into a UID.
+
+        Accepts, in order of precedence: a UID, a full path
+        (``By Type › Pasta`` — ``>`` and ``/`` also work as separators), a
+        path suffix (``Italian › Pasta``), or a bare name. Matching is
+        case-insensitive. Raises ``KeyError`` if nothing or more than one
+        category matches.
+        """
+        ref = str(ref).strip()
+        if ref in self.names:
+            return ref
+
+        def parts(s: str) -> list[str]:
+            for sep in (">", "/"):
+                s = s.replace(sep, "›")
+            return [p.strip().casefold() for p in s.split("›") if p.strip()]
+
+        want = parts(ref)
+        if not want:
+            raise KeyError("empty category reference")
+        full = {uid: parts(self.display(uid)) for uid in self.names}
+        exact = [u for u, p in full.items() if p == want]
+        matches = exact or [u for u, p in full.items() if p[-len(want):] == want]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise KeyError(f"no category matches {ref!r}")
+        options = ", ".join(sorted(self.display(u) for u in matches))
+        raise KeyError(f"{ref!r} is ambiguous — use a longer path: {options}")
+
     @classmethod
     def load(cls, path: Path | None) -> "CategoryMap":
         """Load a mapping file. Missing file -> empty map (UIDs shown as-is).

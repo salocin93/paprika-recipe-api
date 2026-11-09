@@ -1,0 +1,26 @@
+# Copy to category_merges.yaml and edit, then:
+#   uv run merge_categories.py            # dry run
+#   uv run merge_categories.py --apply    # write (with backups)
+#
+# Reference categories by name, by path ("By Type › Pasta"; ">" or "/" also
+# work as separators), by a path suffix ("Italian/Pasta"), or by UID.
+# Ambiguous names (e.g. plain "Pasta") are rejected with the options listed.
+
+merges:
+  - from: [Dessert]
+    to: By Type › Deserts
+
+  - from: [German]
+    to: German & Austrian
+
+  - from: [Spargel]
+    to: Asparagus
+
+  # - from: [Hauptspeise, Main Course]
+  #   to: By Type › Other Mains
+
+  # - from: [Asian Fusion]
+  #   to: By Region › Asian
+
+remove: []
+  # - Grill

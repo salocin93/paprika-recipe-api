@@ -19,6 +19,7 @@ git-ignored because it contains personal data.
 |---|---|---|
 | `uv run analyze_categories.py [--json]` | Category report → `reports/category_analysis.md` | Never |
 | `uv run fetch_categories.py` | Downloads category UID → name map from your Paprika account into `category_map.yaml` | Never |
+| `uv run merge_categories.py [--show-diff] [--apply]` | Merges/removes categories per `category_merges.yaml` | Only with `--apply` (backs up first) |
 | `uv run classify_dietary.py [--limit N] [--apply]` | Runs the (stub) `DietaryClassifier` | Only with `--apply` |
 
 ### Category names
@@ -36,6 +37,20 @@ related meaning like *Baking* vs *Desserts*) only works on resolved names.
 Overlap-based detection (when most recipes in category A are also in B)
 works either way.
 
+### Merging categories
+
+```bash
+cp category_merges.example.yaml category_merges.yaml   # edit it
+uv run merge_categories.py            # dry run: lists every recipe that would change
+uv run merge_categories.py --apply    # write; originals copied to backups/<timestamp>/
+```
+
+Reference categories by name, path (`By Type › Pasta`, or `By Type/Pasta`), a
+path suffix (`Italian/Pasta`) or UID. The whole plan is validated before any
+recipe is touched. Unknown or ambiguous names, a category that is both source
+and target, or a category used in two rules all abort with the list of
+problems. Only the local Markdown files change, not your Paprika account.
+
 ## Architecture
 
 ```
@@ -47,6 +62,7 @@ src/paprika_harness/
 ├── analytics.py       # category analysis + Markdown/console/JSON rendering
 └── processors/
     ├── base.py        # RecipeProcessor ABC + Pipeline runner
+    ├── category_merge.py  # MergePlan + CategoryMerger
     └── dietary.py     # DietaryClassifier stub (LLM goes here)
 ```
 
