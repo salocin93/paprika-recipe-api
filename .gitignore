@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Personal recipe data (exported from Paprika) and generated outputs
+recipes/
+category_map.yaml
+reports/
+
+# macOS
+.DS_Store
+backups/
