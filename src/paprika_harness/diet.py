@@ -18,17 +18,18 @@ DIETS: tuple[Diet, ...] = ("vegan", "vegetarian", "pescatarian", "meat")
 # Higher = less restrictive. A recipe's diet is the lowest rank it satisfies.
 RANK: dict[str, int] = {d: i for i, d in enumerate(DIETS)}
 
-PROMPT_VERSION = "1"  # bump when the prompt changes to invalidate the cache
+PROMPT_VERSION = "2"  # bump when the prompt changes to invalidate the cache
 
 SYSTEM_PROMPT = """\
 You classify recipes by diet. Choose exactly one label, the most restrictive one the recipe satisfies AS WRITTEN:
 
 - "vegan": no animal products at all: no meat, poultry, fish, seafood, dairy (milk, butter, cream, cheese, yogurt, ghee), eggs, honey or gelatin.
-- "vegetarian": no meat, poultry, fish or seafood, and nothing made from them (meat/chicken/fish stock, gelatin, lard, fish sauce, anchovies, shrimp paste, oyster sauce, bonito/dashi). Dairy, eggs and honey are allowed. Treat cheeses such as Parmesan as vegetarian.
-- "pescatarian": contains fish or seafood, or products made from them (fish sauce, anchovies, Worcestershire sauce, shrimp paste, oyster sauce, bonito/dashi), but no meat or poultry.
-- "meat": contains meat or poultry, or products made from them (bacon, ham, sausage, chicken/beef stock, lard, gelatin).
+- "vegetarian": no meat, poultry, fish or seafood, and nothing made from them (gelatin, lard, fish sauce, anchovies, shrimp paste, oyster sauce, bonito flakes). Dairy, eggs and honey are allowed. Treat cheeses such as Parmesan as vegetarian.
+- "pescatarian": contains fish or seafood, or products made from them (fish sauce, anchovies, Worcestershire sauce, shrimp paste, oyster sauce, bonito flakes), but no meat or poultry.
+- "meat": contains meat or poultry, or products made from them (bacon, ham, sausage, lard, gelatin).
 
 Rules:
+- STOCK EXCEPTION: stock, broth, bouillon or stock cubes of any kind (chicken, beef, fish, shrimp, dashi, Brühe, Fond) can always be replaced with vegetable stock. Ignore them completely when choosing the label, do not list them in "animal_ingredients", and do not lower confidence because of them. Everything else (fish sauce, bacon, gelatin, etc.) still counts.
 - Read every ingredient line. Also check the directions and notes for ingredients that are not in the list.
 - Ingredient lists may be in English or German (e.g. Hähnchen = chicken, Speck = bacon, Lachs = salmon, Sahne = cream).
 - If an ingredient offers alternatives ("chicken or vegetable stock"), classify by the first option.
@@ -87,10 +88,21 @@ def build_prompt(recipe: Recipe, *, max_chars: int = 2500) -> str:
 # --------------------------------------------------------------------------- #
 # Keyword cross-check (independent of the LLM)
 # --------------------------------------------------------------------------- #
+# Any stock/broth is treated as swappable for vegetable stock (user policy).
+_STOCK_WORDS = (
+    r"unsalted|low[- ]sodium|reduced[- ]sodium|homemade|store[- ]bought|vegetable|veggie|mushroom|chicken|beef|"
+    r"veal|pork|lamb|bone|fish|shrimp|prawn|seafood|dashi|ham"
+)
+_STOCK = (
+    rf"(?:\b(?:{_STOCK_WORDS})(?:\s*(?:/|,|\bor\b|\band\b)\s*|\s+))*(?:stock|broth|bouillon)"
+    r"(?:\s+(?:cubes?|powder|granules|concentrate))?"
+    r"|\bdashi\b|(?:hühner|rinder|fleisch|geflügel|kalbs|fisch|gemüse|wild|knochen)?(?:brühe|fond|bouillon)"
+)
+
 _EXCLUDE = [
     r"egg ?plants?", r"butternut", r"(peanut|almond|cashew|nut|seed|apple|cocoa|shea|vegan|plant[- ]based) butter",
     r"(almond|oat|soy|soya|coconut|rice|cashew|hazelnut|plant[- ]based|vegan|dairy[- ]free) (milk|cream|yogh?urt|cheese|creamer)",
-    r"cream of tartar", r"(vegetable|veggie|mushroom) (stock|broth|bouillon)", r"butter ?beans?", r"butter ?(head|lettuce)",
+    r"cream of tartar", _STOCK, r"butter ?beans?", r"butter ?(head|lettuce)",
     r"oyster mushrooms?", r"egg[- ]?(less|free)", r"cheesecloth", r"hamburger buns?", r"nutritional yeast",
     r"kokos(nuss)?(milch|sahne|creme)", r"gemüse(brühe|fond)", r"erdnussbutter", r"eierschwammerl",
     r"(hafer|soja|mandel|reis)(milch|sahne|drink)", r"butterbohnen", r"butternuss", r"honeydew", r"butterfl\w*",
@@ -105,7 +117,7 @@ _MEAT = [
 _FISH = [
     r"\bfish", r"salmon", r"tuna", r"\bcod\b", r"anchov", r"sardine", r"mackerel", r"trout", r"tilapia", r"halibut",
     r"haddock", r"snapper", r"sea ?bass", r"shrimp", r"prawn", r"\bcrab", r"lobster", r"mussel", r"\bclams?\b",
-    r"oyster", r"scallop", r"squid", r"calamari", r"octopus", r"bonito", r"katsuobushi", r"\bdashi", r"worcestershire",
+    r"oyster", r"scallop", r"squid", r"calamari", r"octopus", r"bonito", r"katsuobushi", r"worcestershire",
     r"belacan", r"terasi", r"ikan bilis", r"nam pla", r"caviar", r"\broe\b", r"lachs", r"fisch", r"garnele",
     r"sardelle", r"thunfisch", r"krabbe", r"muschel", r"tintenfisch", r"forelle", r"kabeljau",
 ]
@@ -123,17 +135,29 @@ def _compile(pats: list[str]) -> re.Pattern:
 
 
 _EXCLUDE_RE, _MEAT_RE, _FISH_RE, _ANIMAL_RE = map(_compile, (_EXCLUDE, _MEAT, _FISH, _ANIMAL))
+_ANIMAL_STOCK_RE = re.compile(
+    r"\b(chicken|beef|veal|pork|lamb|bone|fish|shrimp|prawn|seafood|ham)\s+(stock|broth|bouillon)|\bdashi\b"
+    r"|(hühner|rinder|fleisch|geflügel|kalbs|fisch|wild|knochen)(brühe|fond|bouillon)",
+    re.I,
+)
+# "chicken or vegetable stock" -> the veg option is already offered; no note needed.
+_VEG_ONLY_STOCK_RE = re.compile(r"\b(vegetable|veggie|mushroom)\s+(stock|broth)|gemüse(brühe|fond)", re.I)
 
 
 @dataclass
 class KeywordScan:
     floor: Diet  # least restrictive label implied by keywords found
     hits: dict[str, list[str]] = field(default_factory=dict)
+    animal_stock: list[str] = field(default_factory=list)  # lines with non-veg stock to swap
 
 
 def keyword_scan(ingredients: list[str]) -> KeywordScan:
     """Find obvious animal ingredients. Used only to sanity-check the LLM."""
     hits: dict[str, list[str]] = {"meat": [], "pescatarian": [], "vegetarian": []}
+    animal_stock = [
+        line for line in ingredients
+        if _ANIMAL_STOCK_RE.search(line) and not _VEG_ONLY_STOCK_RE.search(line)
+    ]
     for line in ingredients:
         text = _EXCLUDE_RE.sub(" ", line.lower())
         for label, rx in (("meat", _MEAT_RE), ("pescatarian", _FISH_RE), ("vegetarian", _ANIMAL_RE)):
@@ -141,7 +165,7 @@ def keyword_scan(ingredients: list[str]) -> KeywordScan:
                 hits[label].append(line)
                 break  # one class per line (most severe wins)
     floor: Diet = next((d for d in ("meat", "pescatarian", "vegetarian") if hits[d]), "vegan")  # type: ignore[assignment]
-    return KeywordScan(floor, {k: v for k, v in hits.items() if v})
+    return KeywordScan(floor, {k: v for k, v in hits.items() if v}, animal_stock)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +186,12 @@ class Classification:
     model: str
     fingerprint: str
     classified_at: str
+    animal_stock: list[str] = field(default_factory=list)  # swap these for vegetable stock
+
+    @property
+    def uses_veg_stock_swap(self) -> bool:
+        """Vegan/vegetarian only once the listed animal stock is swapped."""
+        return bool(self.animal_stock) and RANK[self.diet] <= RANK["vegetarian"]
 
     @property
     def conflict(self) -> bool:
@@ -219,6 +249,7 @@ def classify_recipe(recipe: Recipe, llm: LLMLike) -> Classification:
         model=llm.model,
         fingerprint=fingerprint(recipe, llm.model),
         classified_at=datetime.now().isoformat(timespec="seconds"),
+        animal_stock=scan.animal_stock,
     )
 
 

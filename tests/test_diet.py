@@ -57,6 +57,13 @@ def cmap(tmp_path):
         (["zest and rind of 1 lemon", "honeydew melon", "butterflied tofu"], "vegan"),
         (["200 g Speck"], "meat"),
         (["Rahmspargel"], "vegetarian"),
+        # Stock of any kind is swappable for vegetable stock.
+        (["4 cups chicken stock", "parmesan"], "vegetarian"),
+        (["chicken or vegetable stock"], "vegan"),
+        (["1 l Hühnerbrühe", "2 chicken beef stock cubes"], "vegan"),
+        (["dashi", "miso"], "vegan"),
+        (["2 chicken thighs", "chicken stock"], "meat"),
+        (["shrimp stock", "1 tbsp fish sauce"], "pescatarian"),
     ],
 )
 def test_keyword_scan(ingredients, floor):
@@ -146,3 +153,9 @@ def test_rate_limiter_spaces_calls(monkeypatch):
         rl.wait()
     assert sleeps == [2.0, 4.0]
     assert llm_mod.RateLimiter(None).interval == 0
+
+
+def test_animal_stock_noted_for_swap():
+    assert keyword_scan(["4 cups chicken stock"]).animal_stock == ["4 cups chicken stock"]
+    assert keyword_scan(["chicken or vegetable stock"]).animal_stock == []  # veg option already given
+    assert keyword_scan(["vegetable broth"]).animal_stock == []

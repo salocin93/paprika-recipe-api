@@ -49,13 +49,22 @@ def render_review(classifier: DietaryClassifier, results, *, tagging: bool) -> s
         out.append(f"| {c.title} | {c.diet} | {c.confidence:.2f} | {why} | {c.reason} |".replace("\n", " "))
     out.append("")
 
+    swaps = sorted((c for c in cs.values() if c.uses_veg_stock_swap), key=lambda c: c.title.casefold())
+    out.append(f"## Use vegetable stock ({len(swaps)})\n")
+    out.append("Classified as vegan/vegetarian on the assumption that this stock is swapped for vegetable stock.\n")
+    out.append("| Recipe | Diet | Stock in recipe |\n|---|---|---|")
+    for c in swaps:
+        out.append(f"| {c.title} | {c.diet} | {'; '.join(c.animal_stock)[:120]} |")
+    out.append("")
+
     for d in DIETS:
         rows = sorted((c for c in cs.values() if c.diet == d), key=lambda c: c.title.casefold())
         out.append(f"## {DIET_NAMES[d]} ({len(rows)})\n")
         out.append("| Recipe | Conf. | Deciding ingredients | Reason |\n|---|---:|---|---|")
         for c in rows:
             ing = ", ".join(c.animal_ingredients)[:120]
-            out.append(f"| {c.title} | {c.confidence:.2f} | {ing} | {c.reason} |".replace("|  |", "| |"))
+            title = c.title + (" *(veg stock)*" if c.uses_veg_stock_swap else "")
+            out.append(f"| {title} | {c.confidence:.2f} | {ing} | {c.reason} |".replace("|  |", "| |"))
         out.append("")
     return "\n".join(out)
 
