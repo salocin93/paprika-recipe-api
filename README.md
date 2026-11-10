@@ -21,6 +21,9 @@ git-ignored because it contains personal data.
 | `uv run fetch_categories.py` | Downloads category UID → name map from your Paprika account into `category_map.yaml` | Never |
 | `uv run merge_categories.py [--show-diff] [--apply]` | Merges/removes categories per `category_merges.yaml` | Only with `--apply` (backs up first) |
 | `uv run classify_dietary.py [--limit N] [--apply]` | LLM diet classification → `By Diet › Vegan/Vegetarian/Pescatarian/Meat` | Only with `--apply` |
+| `uv run suggest_categories.py [--apply]` | LLM fills in a missing `By Type` / `By Region` category from the existing ones | Only with `--apply` |
+| `uv run audit_recipes.py` | Duplicates, junk, gaps and US-only units → `reports/recipe_audit.md` | Never |
+| `uv run push_categories.py [--only TEXT] [--apply]` | Sends local category changes to your Paprika account | Never (changes Paprika with `--apply`) |
 
 ### Category names
 
@@ -62,10 +65,14 @@ src/paprika_harness/
 ├── analytics.py       # category analysis + Markdown/console/JSON rendering
 ├── llm.py             # OpenAI-compatible client: structured JSON, rate limiting
 ├── diet.py            # diet prompt, keyword cross-check, result cache
+├── taxonomy.py        # By Type / By Region suggestions from existing categories
+├── units.py           # find US-only units, propose rounded metric values
+├── paprika_api.py     # Paprika sync API: read and upload recipes
 └── processors/
     ├── base.py        # RecipeProcessor ABC + Pipeline runner
     ├── category_merge.py  # MergePlan + CategoryMerger
-    └── dietary.py     # DietaryClassifier: tags By Diet categories
+    ├── dietary.py     # DietaryClassifier: tags By Diet categories
+    └── category_fill.py   # CategoryFiller: adds missing By Type / By Region
 ```
 
 ### Safe writes
@@ -129,6 +136,36 @@ uv run classify_dietary.py --apply    # tag recipes (uses cached results, no new
   categories alone.
 * **Rate limits:** set `LOCAL_LLM_MAX_RPM` (or `--rpm`) to stay under the
   provider's limit. Gemini's free tier allows 15 requests per minute.
+
+### Filling in missing categories
+
+`suggest_categories.py` looks at recipes with no `By Type` or no `By Region`
+category and asks the LLM to pick one from the categories that already exist
+in that branch, or "none". A branch a recipe is already filed under is never
+touched. Suggestions below `--min-confidence` (0.8) are listed for review in
+`reports/category_suggestions.md` and not applied.
+
+### Audit
+
+`audit_recipes.py` is read-only. Its US-units section lists every pound,
+ounce, quart, gallon, inch and °F with a proposed metric value rounded to
+something you would actually measure (1 lb → 450 g). Cups, tablespoons and
+teaspoons are left alone.
+
+### Pushing to Paprika
+
+`push_categories.py` works out what changed locally by comparing `recipes/`
+with an untouched copy of the export (`--baseline-dir`, default
+`recipes_backup/`), then applies only those additions and removals to each
+recipe as it is in Paprika now. Names, ingredients and categories you changed
+in the app since the export are kept. With `--apply` the server copy of every
+recipe is first saved to `backups/paprika-<timestamp>/`, and every upload is
+read back to check it. Try one recipe first:
+
+```bash
+uv run push_categories.py                        # dry run
+uv run push_categories.py --only "Focaccia" --apply
+```
 
 ## Tests
 

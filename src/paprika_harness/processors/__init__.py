@@ -5,3 +5,6 @@ __all__ = ["Pipeline", "PipelineReport", "ProcessResult", "RecipeProcessor", "St
 from .category_merge import CategoryMerger, MergePlan, MergePlanError
 
 __all__ += ["CategoryMerger", "MergePlan", "MergePlanError"]
+from .category_fill import CategoryFiller
+
+__all__ += ["CategoryFiller"]
