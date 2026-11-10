@@ -187,6 +187,7 @@ class Classification:
     fingerprint: str
     classified_at: str
     animal_stock: list[str] = field(default_factory=list)  # swap these for vegetable stock
+    llm_diet: str | None = None  # original LLM label if the stock rule corrected it
 
     @property
     def uses_veg_stock_swap(self) -> bool:
@@ -208,6 +209,34 @@ class Classification:
         if not self.has_ingredients:
             why.append("no ingredient list")
         return why
+
+
+_STOCK_RE = re.compile(_STOCK, re.I)
+
+
+def enforce_stock_rule(c: Classification) -> Classification:
+    """Undo labels the LLM based on stock, despite being told to ignore it.
+
+    The LLM reports the ingredients that decided its label. Stock entries are
+    dropped and the label is re-derived from the rest with the keyword scan.
+    It is only lowered when every remaining ingredient is recognised by the
+    scan, so an unrecognised animal ingredient can't be dropped by accident.
+    """
+    stock = [a for a in c.animal_ingredients if _STOCK_RE.search(a)]
+    if not stock or c.llm_diet is not None:
+        return c
+    rest = [a for a in c.animal_ingredients if not _STOCK_RE.search(a)]
+    if any(keyword_scan([a]).floor == "vegan" for a in rest):
+        return c  # something the keywords don't know; trust the LLM
+    derived = keyword_scan(rest).floor
+    if RANK[derived] >= RANK[c.diet]:
+        return c
+    c.llm_diet = c.diet
+    c.diet = derived
+    c.animal_ingredients = rest
+    c.reason = f"{c.reason} [Corrected from {c.llm_diet}: {', '.join(stock)} can be swapped for vegetable stock.]"
+    c.animal_stock = sorted(set(c.animal_stock) | set(stock))
+    return c
 
 
 class LLMLike(Protocol):
@@ -235,7 +264,7 @@ def classify_recipe(recipe: Recipe, llm: LLMLike) -> Classification:
         confidence = 0.0
     ingredients = extract_ingredients(recipe.body)
     scan = keyword_scan(ingredients)
-    return Classification(
+    return enforce_stock_rule(Classification(
         uid=recipe.uid or recipe.path.stem,
         title=recipe.title,
         file=recipe.path.name,
@@ -250,7 +279,7 @@ def classify_recipe(recipe: Recipe, llm: LLMLike) -> Classification:
         fingerprint=fingerprint(recipe, llm.model),
         classified_at=datetime.now().isoformat(timespec="seconds"),
         animal_stock=scan.animal_stock,
-    )
+    ))
 
 
 class ClassificationCache:
@@ -271,7 +300,7 @@ class ClassificationCache:
         if not entry or entry.get("fingerprint") != fingerprint(recipe, model):
             return None
         try:
-            return Classification(**entry)
+            return enforce_stock_rule(Classification(**entry))
         except TypeError:
             return None  # schema changed; reclassify
 

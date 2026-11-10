@@ -143,3 +143,25 @@ def test_real_export_round_trips_byte_for_byte():
     for r in scan.recipes:
         _, fm_text, _ = split_frontmatter(r.raw_text)
         assert dump_frontmatter(r.frontmatter) == fm_text, r.path.name
+
+
+def test_backups_from_one_run_share_a_folder(tmp_path, monkeypatch):
+    import paprika_harness.file_manager as fmod
+    for n in ("a", "b"):
+        write(tmp_path, f"{n}.md", SAMPLE)
+    stamps = iter(["20260101-000000", "20260101-000001"])
+
+    class FakeDT:
+        @staticmethod
+        def now():
+            class T:
+                def strftime(self, _):
+                    return next(stamps)
+            return T()
+
+    monkeypatch.setattr(fmod, "datetime", FakeDT)
+    fm = RecipeFileManager(tmp_path, dry_run=False, backup_dir=tmp_path / "bk")
+    for r in fm.scan().recipes:
+        r.frontmatter["rating"] = 1
+        fm.save(r)
+    assert [p.name for p in (tmp_path / "bk").iterdir()] == ["20260101-000000"]

@@ -159,6 +159,7 @@ class RecipeFileManager:
         self.dry_run = dry_run
         self.backup_dir = Path(backup_dir).expanduser() if backup_dir else None
         self.pattern = pattern
+        self._backup_stamp: str | None = None  # one backup folder per manager/run
 
         if not self.recipes_dir.exists():
             raise FileNotFoundError(f"Recipes directory not found: {self.recipes_dir}")
@@ -232,8 +233,9 @@ class RecipeFileManager:
 
     def _backup(self, path: Path) -> Path:
         assert self.backup_dir is not None
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest_dir = self.backup_dir / stamp
+        if self._backup_stamp is None:
+            self._backup_stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest_dir = self.backup_dir / self._backup_stamp
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / path.name
         shutil.copy2(path, dest)

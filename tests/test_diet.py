@@ -159,3 +159,28 @@ def test_animal_stock_noted_for_swap():
     assert keyword_scan(["4 cups chicken stock"]).animal_stock == ["4 cups chicken stock"]
     assert keyword_scan(["chicken or vegetable stock"]).animal_stock == []  # veg option already given
     assert keyword_scan(["vegetable broth"]).animal_stock == []
+
+
+def _c(diet, animal):
+    from paprika_harness.diet import Classification
+    return Classification(uid="u", title="t", file="f", diet=diet, confidence=1.0, animal_ingredients=animal,
+                          reason="r", keyword_floor="vegan", keyword_hits={}, has_ingredients=True,
+                          model="m", fingerprint="x", classified_at="now")
+
+
+@pytest.mark.parametrize(
+    "diet, animal, expected",
+    [
+        ("meat", ["beef stock", "butter", "gruyère"], "vegetarian"),   # French onion soup
+        ("pescatarian", ["dashi stock powder"], "vegan"),
+        ("meat", ["Kalbsfond", "Butter"], "vegetarian"),
+        ("meat", ["chicken stock", "bacon"], "meat"),                  # real meat stays
+        ("meat", ["chicken stock", "mystery jus"], "meat"),            # unrecognised -> trust LLM
+        ("pescatarian", ["fish sauce"], "pescatarian"),                # no stock involved
+    ],
+)
+def test_enforce_stock_rule(diet, animal, expected):
+    from paprika_harness.diet import enforce_stock_rule
+    c = enforce_stock_rule(_c(diet, animal))
+    assert c.diet == expected
+    assert (c.llm_diet == diet) == (expected != diet)
