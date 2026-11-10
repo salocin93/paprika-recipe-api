@@ -9,7 +9,7 @@ from paprika_harness.paprika_api import PaprikaClient, patch_categories, recipe_
 from paprika_harness.processors import Pipeline
 from paprika_harness.processors.category_fill import CategoryFiller
 from paprika_harness.taxonomy import SuggestionCache, load_branch
-from paprika_harness.units import convert_line, find_us_units
+from paprika_harness.units import convert_body, convert_line, find_us_units
 
 
 # -- units ---------------------------------------------------------------------
@@ -39,9 +39,44 @@ def test_cups_spoons_and_metric_are_left_alone(line):
     assert convert_line(line) == line and not find_us_units(line)
 
 
-def test_ounces_of_liquid_are_flagged_as_uncertain():
+def test_ounces_of_liquid_are_converted_as_volume():
     (hit,) = find_us_units("8 oz heavy cream")
-    assert hit.uncertain and hit.proposed == "225 ml"
+    assert hit.liquid and hit.proposed == "225 ml"
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("1 lb (450g) fresh noodles", "450g fresh noodles"),
+        ("~10 ounces (285g) artichoke hearts", "285g artichoke hearts"),
+        ("400ml / 14 oz coconut milk", "400ml coconut milk"),
+        ("2 lb/ 1 kg chuck steak", "1 kg chuck steak"),
+        ("1.25 kg / 2.5 lb chicken", "1.25 kg chicken"),
+        ("½ bamboo shoot (4 oz, 120 g)", "½ bamboo shoot (120 g)"),
+        ("1 onion, cut into 1 inch/2.5 cm squares", "1 onion, cut into 2.5 cm squares"),
+        ("Fry (75°C / 167°F) for 8 minutes", "Fry (75°C) for 8 minutes"),
+        ("500 g (about 1 lb) flour", "500 g flour"),
+        ("14 oz ricotta cheese (400g)", "400g ricotta cheese"),
+        ("8.8 oz mozzarella torn (2 balls / 250g)", "250g mozzarella torn (2 balls)"),
+        ("8.8 oz 250g ground beef (mince) (250g)", "250g ground beef (mince)"),
+        ("250 – 300 g/8 – 10 oz pork mince", "250 – 300 g pork mince"),
+        ("1.2kg/2lb 11 oz ox tail pieces", "1.2kg ox tail pieces"),
+        ("1 pound plus 5 ounces (600 grams) pork", "600 grams pork"),
+        ("200 g pork belly (skinless), sliced, about 7oz", "200 g pork belly (skinless), sliced"),
+        ("400g minced pork (14 oz)", "400g minced pork"),
+        ("½ onion (4 oz or 113 g)", "½ onion (113 g)"),
+        ("125ml/4fl oz very hot water", "125ml very hot water"),
+    ],
+)
+def test_existing_metric_amount_is_kept_and_us_amount_dropped(line, expected):
+    assert convert_line(line) == expected
+
+
+def test_convert_body_only_touches_recipe_sections():
+    body = "# 1 lb Cake\n\n## Ingredients\n\n- 1 lb flour\n- 2 cups milk\n\n## Nutritional Information\n\n8 oz\n"
+    new, changes = convert_body(body)
+    assert new == body.replace("- 1 lb flour", "- 450 g flour")
+    assert changes == [("- 1 lb flour", "- 450 g flour")]
 
 
 # -- pushing to Paprika --------------------------------------------------------

@@ -144,12 +144,12 @@ def render(recipes, cmap) -> str:
     out.append("| Unit | Recipes | Occurrences |\n|---|---:|---:|")
     out += [f"| {LABELS[u]} | {len(per_unit_recipes[u])} | {n} |" for u, n in per_unit.most_common()] + [""]
     out.append("### Proposed replacements\n")
-    out.append("*(check)* marks ounces of a liquid, where the recipe may mean volume or weight.\n")
+    out.append("Ounces of a liquid are converted as volume (ml).\n")
     for name in sorted(units, key=lambda n: units[n][0].title.casefold()):
         r, rows = units[name]
         out.append(f"**{r.title[:80]}**\n")
         for where, line, hits in rows:
-            changes = "; ".join(f"`{h.original}` → `{h.proposed}`" + (" *(check)*" if h.uncertain else "") for h in hits)
+            changes = "; ".join(f"`{h.original}` → `{h.proposed}`" for h in hits)
             out.append(f"- {where}: {line[:110]}{'…' if len(line) > 110 else ''}  \n  {changes}")
         out.append("")
     return "\n".join(out)
