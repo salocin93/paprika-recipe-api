@@ -89,10 +89,12 @@ class PaprikaClient:
         if result is not True:
             raise PaprikaError(f"upload of {recipe['uid']} not confirmed: {result!r}")
 
-    def set_categories(self, server_recipe: dict, categories: list[str]) -> dict:
-        """Upload ``server_recipe`` with new categories and a new hash; return what was sent."""
-        new = dict(server_recipe)
-        new["categories"] = list(categories)
+    def update_recipe(self, server_recipe: dict, **fields) -> dict:
+        """Upload ``server_recipe`` with ``fields`` replaced and a new hash; return what was sent."""
+        new = {**server_recipe, **fields}
         new["hash"] = recipe_hash(new)
         self.upload_recipe(new)
         return new
+
+    def set_categories(self, server_recipe: dict, categories: list[str]) -> dict:
+        return self.update_recipe(server_recipe, categories=list(categories))
